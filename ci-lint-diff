@@ -3,6 +3,12 @@
 # Given a file of warnings, reports only those that are in the diff for the
 # current pull request.  Works for Azure Pipelines, CircleCI, and Travis CI.
 # Exit status is non-zero if any warnings are output.
+#
+# This script assumes that filenames in the warnings file are relative to the
+# project root or are higher (e.g., absolute).  If they are relative to a
+# subdirectory of the project root, supply "--warnings-subdir N" where N is the
+# number of subdirectories down.  This does not work if filenames in the warnings
+# file start with "./" because then they aren't some number of directories down.
 
 # Example use:
 #
@@ -24,23 +30,43 @@
 
 DEBUG=""
 
-if [ "$#" -eq 0 ] ; then
+usage() {
   echo "Usage: $0 [--debug] WARNINGS-FILE" >&2
   exit 2
-fi
-if [ "$1" = "--debug" ] ; then
-    DEBUG="--debug"
+}
+
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            usage
+            ;;
+        --warnings-subdir)
+            if [ -n "$2" ]; then
+                WARNINGS_SUBDIR=$2
+                shift
+            else
+                printf 'ERROR: "--warnings-subdir" requires a non-empty option argument.\n' >&2
+                exit 1
+            fi
+            ;;
+        --debug)
+            DEBUG=--debug
+            ;;
+        *)
+            break
+    esac
+
     shift
-fi
+done
+
 if [ "$#" -ne 1 ] ; then
-  echo "Usage: $0 [--debug] WARNINGS-FILE" >&2
-  exit 2
-fi
-if ! [ -f "$1" ] ; then
-  echo "File $1 does not exist" >&2
-  exit 2
+  usage
 fi
 WARNINGSFILE=$1
+if ! [ -f "$WARNINGSFILE" ] ; then
+  echo "File $WARNINGSFILE does not exist" >&2
+  exit 2
+fi
 
 set -e
 
@@ -155,6 +181,7 @@ if [ -n "$CI_LINT_DIFF_ERROR" ] ; then
 fi
 
 if [ "$DEBUG" = "--debug" ] ; then
+    echo "STRIP_DIFF=${STRIP_DIFF} STRIP_LINT=${STRIP_LINT}"
     echo "warnings file $WARNINGSFILE:"
     cat "$WARNINGSFILE"
     echo "end of warnings file $WARNINGSFILE."
@@ -165,4 +192,14 @@ fi
 
 set -e
 
-"${SCRIPTDIR}"/lint-diff.py $DEBUG --guess-strip /tmp/diff.txt "$WARNINGSFILE"
+if [ -n "$WARNINGS_SUBDIR" ] ; then
+  "${SCRIPTDIR}"/lint-diff.py $DEBUG --strip_diff 1 --strip_lint "$WARNINGS_SUBDIR" /tmp/diff.txt "$WARNINGSFILE"
+elif [ -n "$STRIP_DIFF" ] && [ -z "$STRIP_LINT" ] ; then
+  echo "--strip-diff is set to ${STRIP_DIFF} but --strip-lint was not supplied"
+  exit 2
+elif [ -z "$STRIP_DIFF" ] && [ -n "$STRIP_LINT" ] ; then
+  echo "--strip-lint is set to ${STRIP_LINT} but --strip-diff was not supplied"
+  exit 2
+else
+  "${SCRIPTDIR}"/lint-diff.py $DEBUG --guess-strip /tmp/diff.txt "$WARNINGSFILE"
+fi

@@ -13,12 +13,20 @@
 # Output: all lines in warnings.txt that are on a changed line.
 #         Output status is 1 if it produced any output, 0 if not, 2 if error.
 # Options: --guess-strip means guess values for --strip-diff and --strip-lint.
+#          --warnings-subdir=DIR with --guess-strip means filenames in the
+#              warnings file are relative to a subdirectory of the project root.
 #          --strip-diff=N means to ignore N leading "/" in diff.txt.
 #          --strip-warnings=N means to ignore N leading "/" in warnings.txt.
 #              Affects matching, but not output, of lines.
 #          --context=N is how many lines adjacent to the changed ones
 #              are also considered changed; the default is 2.
 #          --debug means to print diagnostic output.
+# --guess-strip will work if filenames in the files are relative to the project
+# root or are higher (for example, it works if the filenames are absolute).  If
+# the warnings file uses filesnames that are relative to a subdirectory of the
+# project root, supply "--warnings-subdir DIR".  This does not currently work if
+# filenames in the warnings file start with "./" because then they aren't some
+# number of directories down from the project root.
 
 # Here is how you could use this in continuous integration (Azure
 # Pipelines, CircleCI, and Travis CI are currently supported) to require
@@ -144,14 +152,14 @@ def diff_filenames(diff_filename):
     return result
 
 
-def warning_filenames(warning_filename):
+def warning_filenames(warning_filename, warnings_subdir):
     """All the filenames in the given warning file."""
     result = set()
     with open(warning_filename, encoding='utf-8') as warnings:
         for warning_line in warnings:
             match = FILENAME_LINENO_RE.match(warning_line)
             if match:
-                result.add(match.group(1))
+                result.add(warnings_subdir + match.group(1))
     return result
 
 
@@ -165,11 +173,12 @@ def guess_strip_filenames(diff_filenames, warning_filenames):
     return result
 
 
-def guess_strip_files(diff_file, warning_file):
+def guess_strip_files(diff_file, warning_file, warnings_subdir):
     """Arguments are files produced by diff and a lint tool, respectively.
+    Optional third argument means filenames in warnings are relative to that directory.
     Result is a pair of integers."""
     diff_files = diff_filenames(diff_file)
-    warning_files = warning_filenames(warning_file)
+    warning_files = warning_filenames(warning_file, warnings_subdir)
     result = guess_strip_filenames(diff_files, warning_files)
     diff_prefix = os.path.commonprefix(list(diff_files))
     warnings_prefix = os.path.commonprefix(list(warning_files))
@@ -199,6 +208,11 @@ def parse_args():
                         action='store_true',
                         default=False,
                         help="guess values for --strip-diff and --strip-warnings")
+    parser.add_argument('--warnings-subdir',
+                        dest='warnings_subdir',
+                        action='store',
+                        default="",
+                        help="relative directory for warnings.txt; use with --guess-strip")
     parser.add_argument('--strip-diff',
                         metavar="NUM_SLASHES",
                         dest='strip_diff',
@@ -251,7 +265,11 @@ def parse_args():
         sys.exit(2)
 
     if args.guess_strip:
-        guessed_strip = guess_strip_files(args.diff_filename, args.warning_filename)
+        warnings_subdir = args.warnings_subdir
+        if (not warnings_subdir == "") and (not warnings_subdir.endsWith("/")):
+            warnings_subdir = warnings_subdir + "/"
+        guessed_strip = guess_strip_files(args.diff_filename, args.warning_filename,
+                                          warnings_subdir)
         if guessed_strip[0] == 1000:
             if DEBUG:
                 eprint(
